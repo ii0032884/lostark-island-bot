@@ -1,4 +1,19 @@
 # main.py
+import threading, socket, os
+
+# Render가 포트 감지하도록 가짜 웹서버를 열기
+def fake_server():
+    port = int(os.environ.get("PORT", 10000))  # Render가 자동으로 PORT 할당
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("0.0.0.0", port))
+    s.listen(1)
+    while True:
+        conn, addr = s.accept()
+        conn.close()
+
+threading.Thread(target=fake_server, daemon=True).start()
+
+
 import os
 import logging
 from datetime import datetime, timedelta
