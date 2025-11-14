@@ -40,7 +40,10 @@ LOSTARK_JWT = os.getenv("LOSTARK_JWT")
 KST = pytz.timezone("Asia/Seoul")
 API_URL = "https://developer-lostark.game.onstove.com/gamecontents/calendar"
 
+# 🔥 Intents 보강 (길드/채널/메시지 캐시 확실히 받기)
 intents = discord.Intents.default()
+intents.guilds = True
+intents.messages = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 logging.basicConfig(level=logging.INFO)
 
@@ -177,11 +180,13 @@ def build_adventure_embed(for_date=None, prefix="오늘의 모험섬"):
 # 자동 발송 함수
 # ──────────────────────────────────────────────────────────────────────────────
 async def send_island_info():
+    logging.info(f"send_island_info 실행, CHANNEL_ID={CHANNEL_ID}")
     ch = bot.get_channel(CHANNEL_ID)
+    logging.info(f"send_island_info 채널 객체: {ch} (type={type(ch)})")
     if ch:
         await ch.send(embed=build_adventure_embed())
     else:
-        logging.error("채널을 찾지 못함. DISCORD_CHANNEL_ID 확인 필요.")
+        logging.error("채널을 찾지 못함. DISCORD_CHANNEL_ID / 권한 / 인텐트 확인 필요.")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -189,7 +194,14 @@ async def send_island_info():
 # ──────────────────────────────────────────────────────────────────────────────
 @bot.event
 async def on_ready():
-    logging.info(f"로그인 성공: {bot.user}")
+    logging.info(f"로그인 성공: {bot.user} (ID: {bot.user.id})")
+    logging.info(f"환경에서 읽은 CHANNEL_ID={CHANNEL_ID}")
+
+    # 봇이 완전히 준비될 때까지 대기 (길드/채널 캐시 확보)
+    await bot.wait_until_ready()
+
+    ch = bot.get_channel(CHANNEL_ID)
+    logging.info(f"on_ready에서 채널 객체: {ch} (type={type(ch)})")
 
     # 스케줄러 job이 중복 등록 방지
     if not scheduler.get_jobs():
@@ -198,17 +210,47 @@ async def on_ready():
         # 서버 부팅 후 10초 뒤 테스트 발송 (정상 작동 확인)
         scheduler.add_job(
             send_island_info,
-            DateTrigger(
-                run_date=datetime.now(KST) + timedelta(seconds=10)
-            ),
+            DateTrigger(run_date=datetime.now(KST) + timedelta(seconds=10)),
         )
 
         scheduler.start()
+        logging.info("Scheduler started")
 
     try:
         await bot.tree.sync()
-    except:
-        pass
+        logging.info("Slash commands synced")
+    except Exception as e:
+        logging.warning(f"Slash sync 실패: {e}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Slash 명령어
+# ──────────────────────────────────────────────────────────────────────────────
+@bot.tree.command(name="island", description="오늘 모험섬 정보")
+async def island_today(interaction: discord.Interaction):
+    await interaction.response.defer()
+    await interaction.followup.send(embed=build_adventure_embed())
+
+
+@bot.tree.command(name="island_tomorrow", description="내일 모험섬 정보")
+async def island_tomorrow(interaction: discord.Interaction):
+    await interaction.response.defer()
+    tomorrow = (datetime.now(KST) + timedelta(days=1)).date()
+    await interaction.followup.send(
+        embed=build_adventure_embed(for_date=tomorrow, prefix="내일 모험섬")
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 실행
+# ──────────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    if not DISCORD_TOKEN or not CHANNEL_ID or not LOSTARK_JWT:
+        raise SystemExit(
+            ".env / Render 환경변수의 DISCORD_TOKEN, DISCORD_CHANNEL_ID, LOSTARK_JWT를 확인하세요."
+        )
+    bot.run(DISCORD_TOKEN)
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -233,4 +275,8 @@ async def island_tomorrow(interaction: discord.Interaction):
 # 실행
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    if not DISCORD_TOKEN or not CHANNEL_ID or not LOSTARK_JWT:
+        raise SystemExit(
+            ".env / Render 환경변수의 DISCORD_TOKEN, DISCORD_CHANNEL_ID, LOSTARK_JWT를 확인하세요."
+        )
     bot.run(DISCORD_TOKEN)
