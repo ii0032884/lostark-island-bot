@@ -117,27 +117,51 @@ def parse_adventure_islands(data, date=None):
 
     out = []
 
+    if not isinstance(data, list):
+        return out
+
     for e in data:
-        cat = (e.get("Category") or "").lower()
+        # Category / CategoryName 둘 다 확인
+        cat = (
+            e.get("Category")
+            or e.get("CategoryName")
+            or ""
+        )
+        cat_low = str(cat).lower()
 
-        if ("모험" in cat and "섬" in cat) or ("adventure" in cat and "island" in cat):
-            name = e.get("ContentsName") or "모험섬"
-            desc = e.get("ContentsNote") or ""
+        # 모험섬 카테고리 판별
+        if ("모험" in cat_low and "섬" in cat_low) or ("adventure" in cat_low and "island" in cat_low):
+            name = e.get("ContentsName") or e.get("Title") or "모험섬"
+            desc = e.get("ContentsNote") or e.get("Description") or ""
             rewards = e.get("RewardItems") or e.get("Rewards")
-            times = e.get("StartTimes") or []
 
+            times = e.get("StartTimes") or e.get("StartTime") or []
             if not isinstance(times, list):
                 times = [times]
 
             valid = []
+            raw_times = []
+
             for t in times:
+                raw_times.append(str(t))
                 try:
                     dt = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
-                    dt = dt.astimezone(KST)
+                    # 타임존 정리
+                    if dt.tzinfo is None:
+                        dt = KST.localize(dt)
+                    else:
+                        dt = dt.astimezone(KST)
+
                     if dt.date() == date:
                         valid.append(dt)
-                except:
-                    pass
+                except Exception as ex:
+                    logging.warning(f"[parse_adventure_islands] 시간 파싱 실패: {t} / {ex}")
+
+            # 디버그 로그: 이 이벤트가 오늘자로 어떻게 인식됐는지
+            logging.info(
+                f"[캘린더] {name} cat={cat} raw_times={raw_times} "
+                f"오늘 날짜 매칭 개수={len(valid)}"
+            )
 
             if valid:
                 out.append({
@@ -149,6 +173,7 @@ def parse_adventure_islands(data, date=None):
 
     out.sort(key=lambda x: x["times"][0])
     return out
+
 
 
 def build_adventure_embed(for_date=None, prefix="오늘의 모험섬"):
