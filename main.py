@@ -177,11 +177,22 @@ def build_adventure_embed(for_date=None, prefix="오늘의 모험섬"):
 
 
 async def send_island_info():
+    logging.info(f"[send_island_info] 시작, CHANNEL_ID={CHANNEL_ID}")
+
     ch = bot.get_channel(CHANNEL_ID)
+    logging.info(f"[send_island_info] 채널 객체={ch} (type={type(ch)})")
+
     if not ch:
-        logging.error("채널 찾기 실패")
+        logging.error("[send_island_info] 채널을 찾지 못했습니다. DISCORD_CHANNEL_ID를 확인하세요.")
         return
-    await ch.send(embed=build_adventure_embed())
+
+    try:
+        embed = build_adventure_embed()
+        logging.info(f"[send_island_info] embed 생성 완료: title={embed.title}")
+        await ch.send(embed=embed)
+        logging.info("[send_island_info] 메시지 전송 완료")
+    except Exception as e:
+        logging.exception(f"[send_island_info] 메시지 전송 중 예외 발생: {e}")
 
 
 @bot.event
