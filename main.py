@@ -1,87 +1,80 @@
+import os
 import discord
 import asyncio
-from discord.ext import commands, tasks
-from datetime import datetime, timedelta
-import pytz
+import requests
+from datetime import datetime
+from discord.ext import tasks
+from dotenv import load_dotenv
 
-TOKEN = "YOUR_TOKEN_HERE"  # <-- 토큰 넣기
-CHANNEL_ID = 000000000000  # <-- 알림 보낼 채널 ID 넣기
+load_dotenv()
 
-KST = pytz.timezone("Asia/Seoul")
+TOKEN = os.getenv("DISCORD_TOKEN")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+JWT = os.getenv("LOSTARK_JWT")
 
-bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
-
-
-# -----------------------------
-# 모험섬 정보 & 보상 문자열 만들기
-# -----------------------------
-def get_adventure_island_message():
-    island_name = "오늘의 모험섬"
-    rewards = [
-        "모험물 : 죽은자의 눈",
-        "비밀지도",
-        "수신 아포라스 카드",
-        "실링",
-        "영혼의 잎사귀",
-        "전설 ~ 고급 카드 팩 III",
-        "전설 ~ 고급 카드 팩 IV",
-        "죽음의 협곡 섬의 마음",
-    ]
-
-    reward_text = "\n".join([f"- {r}" for r in rewards])
-
-    msg = (
-        f"🌴 **{island_name} 정보 안내**\n"
-        f"⏰ 시간: 20:00 / 22:00 (그날 기준)\n"
-        f"🎁 보상 목록:\n{reward_text}"
-    )
-    return msg
+intents = discord.Intents.default()
+client = discord.Client(intents=intents)
 
 
-# -----------------------------
-# 시간 맞춰 보내는 스케줄러
-# -----------------------------
-async def schedule_daily_task(target_time):
-    await bot.wait_until_ready()
-    channel = bot.get_channel(CHANNEL_ID)
+# ===========================
+#  LostArk API 호출 함수
+# ===========================
+def get_adventure_island_info():
+    url = "https://developer-lostark.game.onstove.com/gamecontents/calendar"
+    headers = {
+        "accept": "application/json",
+        "authorization": f"bearer {JWT}",
+    }
 
-    while not bot.is_closed():
-        now = datetime.now(KST)
-        target = now.replace(hour=target_time.hour, minute=target_time.minute, second=0, microsecond=0)
+    try:
+        res = requests.get(url, headers=headers)
+        data = res.json()
 
-        # 이미 시간이 지났으면 내일 같은 시간
-        if now > target:
-            target += timedelta(days=1)
+        # Adventure Island 필터
+        islands = [d for d in data if d["CategoryName"] == "모험 섬"]
 
-        wait_seconds = (target - now).total_seconds()
-        await asyncio.sleep(wait_seconds)
+        if len(islands) == 0:
+            return "오늘 모험섬 정보 없음."
 
-        # 메시지 보내기
-        if channel:
-            await channel.send(get_adventure_island_message())
+        msg = "📢 **오늘의 모험섬 정보**\n\n"
+        for i in islands:
+            msg += f"■ **{i['ContentsName']}**\n"
+            msg += f"- 시간: {i['StartTimes'][0].replace('T', ' ')}\n"
+            msg += f"- 보상: {', '.join(i['RewardItems'])}\n\n"
+
+        return msg
+
+    except Exception as e:
+        return f"API 호출 오류: {e}"
 
 
-# -----------------------------
-# 봇 켜질 때 스케줄러 3개 실행
-# -----------------------------
-@bot.event
+# ===========================
+#  매일 06:01에 자동 전송
+# ===========================
+@tasks.loop(minutes=1)
+async def daily_notice():
+    now = datetime.utcnow().strftime("%H:%M")
+    # 한국시간 06:01 → UTC 기준 21:01 (전날)
+    if now == "21:01":  
+        channel = client.get_channel(CHANNEL_ID)
+        if channel is not None:
+            msg = get_adventure_island_info()
+            await channel.send(msg)
+
+
+@client.event
 async def on_ready():
-    print(f"Bot logged in as {bot.user}")
-
-    asyncio.create_task(schedule_daily_task(datetime.strptime("06:01", "%H:%M")))
-    asyncio.create_task(schedule_daily_task(datetime.strptime("07:00", "%H:%M")))
-    asyncio.create_task(schedule_daily_task(datetime.strptime("08:00", "%H:%M")))
+    print(f"로그인됨: {client.user}")
+    daily_notice.start()
 
 
-# -----------------------------
-# 테스트용 명령어
-# -----------------------------
-@bot.command()
-async def 모험(ctx):
-    """수동으로 출력"""
-    await ctx.send(get_adventure_island_message())
+# ===========================
+#      실행
+# ===========================
+client.run(TOKEN)
 
 
 bot.run(TOKEN)
+
 
 
