@@ -42,8 +42,13 @@ API_URL = "https://developer-lostark.game.onstove.com/gamecontents/calendar"
 
 logging.basicConfig(level=logging.INFO)
 
-# Discord 설정
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Discord 설정 (슬래시 커맨드 활성화 필수 옵션!)
+# ──────────────────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
+intents.message_content = True   # ← 이거 없으면 slash sync 실패함
+
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
@@ -81,7 +86,6 @@ def rewards_to_text(rewards):
 
     names = []
 
-    # 중첩된 RewardItems 다 찾아서 이름만 빼기
     def extract(o):
         if isinstance(o, dict):
             if o.get("Name"):
@@ -100,7 +104,6 @@ def rewards_to_text(rewards):
     if not names:
         return "보상: (이벤트 데이터 없음)"
 
-    # 금 보상 구분
     gold = [n for n in names if ("골드" in n or "gold" in n.lower())]
     other = [n for n in names if n not in gold]
 
@@ -175,18 +178,15 @@ def build_adventure_embed(for_date=None, prefix="오늘의 모험섬"):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 자동 발송 (06:01 체크 방식)
+# 자동 발송 (매일 06:01)
 # ──────────────────────────────────────────────────────────────────────────────
-last_send_date = None   # 하루 1회 제한용
+last_send_date = None
 
 async def daily_check():
-    """매 1분마다 실행 → 06:01 되면 발송"""
     global last_send_date
-
     now = datetime.now(KST)
     today = now.date()
 
-    # 이미 보냈으면 패스
     if last_send_date == today:
         return
 
@@ -214,11 +214,12 @@ async def on_ready():
     scheduler.add_job(daily_check, "interval", minutes=1)
     scheduler.start()
 
-    # Slash 등록
+    # Slash 명령어 등록
     try:
-        await bot.tree.sync()
-    except:
-        pass
+        synced = await bot.tree.sync()
+        logging.info(f"Slash 명령어 등록 완료: {len(synced)}개")
+    except Exception as e:
+        logging.error(f"Slash 명령어 등록 실패: {e}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -244,3 +245,4 @@ async def island_tomorrow(interaction: discord.Interaction):
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
