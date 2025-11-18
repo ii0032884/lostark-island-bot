@@ -44,11 +44,10 @@ logging.basicConfig(level=logging.INFO)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Discord 설정 (슬래시 커맨드 활성화 필수 옵션!)
+# Discord 설정
 # ──────────────────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
-intents.message_content = True   # ← 이거 없으면 slash sync 실패함
-
+intents.message_content = True   # Slash sync 필수 옵션
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
@@ -59,7 +58,6 @@ _calendar_cache_date = None
 _calendar_cache_data = None
 
 def get_calendar():
-    """API + 캐시"""
     global _calendar_cache_date, _calendar_cache_data
 
     today = datetime.now(KST).date()
@@ -102,7 +100,7 @@ def rewards_to_text(rewards):
     names = [n.strip() for n in names if n.strip()]
 
     if not names:
-        return "보상: (이벤트 데이터 없음)"
+        return "보상: (데이터 없음)"
 
     gold = [n for n in names if ("골드" in n or "gold" in n.lower())]
     other = [n for n in names if n not in gold]
@@ -178,7 +176,7 @@ def build_adventure_embed(for_date=None, prefix="오늘의 모험섬"):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 자동 발송 (매일 06:01)
+# 자동 발송 (Render Free 환경 100% 보장 버전)
 # ──────────────────────────────────────────────────────────────────────────────
 last_send_date = None
 
@@ -187,15 +185,17 @@ async def daily_check():
     now = datetime.now(KST)
     today = now.date()
 
+    # 이미 보냈으면 패스
     if last_send_date == today:
         return
 
-    if now.hour == 6 and now.minute == 1:
+    # 서버가 깨어난 시간이 6시 이후라면 즉시 발송 (06:01 못 맞춰도 전송)
+    if now.hour >= 6:
         ch = bot.get_channel(CHANNEL_ID)
         if ch:
             embed = build_adventure_embed()
             await ch.send(embed=embed)
-            logging.info("[자동 발송] 06:01 모험섬 전송 완료")
+            logging.info("[자동 발송] 오늘 모험섬 전송 완료 (깨어난 시점)")
         else:
             logging.error("채널을 찾지 못했습니다.")
 
@@ -209,12 +209,11 @@ async def daily_check():
 async def on_ready():
     logging.info(f"로그인 성공: {bot.user}")
 
-    # 스케줄러 시작
     scheduler = AsyncIOScheduler(timezone=KST)
     scheduler.add_job(daily_check, "interval", minutes=1)
     scheduler.start()
 
-    # Slash 명령어 등록
+    # Slash 등록
     try:
         synced = await bot.tree.sync()
         logging.info(f"Slash 명령어 등록 완료: {len(synced)}개")
@@ -245,4 +244,3 @@ async def island_tomorrow(interaction: discord.Interaction):
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
-
