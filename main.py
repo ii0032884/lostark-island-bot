@@ -1,83 +1,77 @@
-###############################################
-# LOST ARK DISCORD BOT (Render Free Web Service)
-# Flask 제거 / Socket 서버로 포트 유지 / Bot 단일 프로세스
-###############################################
+# ──────────────────────────────────────────────────────────────────────────────
+# HTTP Health Check (Flask) → Render Free Sleep 방지
+# ──────────────────────────────────────────────────────────────────────────────
+from flask import Flask
+import threading, os
 
-import threading
-import socket
-import os
+app = Flask(__name__)
 
-# ─────────────────────────────────────────────
-# 포트 열어서 Render Web Service 정상 유지
-# ─────────────────────────────────────────────
-def keep_render_alive():
+@app.route("/")
+def home():
+    return "OK", 200
+
+def run_server():
     port = int(os.environ.get("PORT", 10000))
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(("0.0.0.0", port))
-    s.listen(5)
+    app.run(host="0.0.0.0", port=port)
 
-    while True:
-        conn, addr = s.accept()
-        try:
-            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK")
-        except:
-            pass
-        conn.close()
-
-threading.Thread(target=keep_render_alive, daemon=True).start()
+threading.Thread(target=run_server, daemon=True).start()
 
 
-# ─────────────────────────────────────────────
-# 이하 Discord Bot (Flask 없음)
-# ─────────────────────────────────────────────
-
+# ──────────────────────────────────────────────────────────────────────────────
+# Discord Bot + Scheduler
+# ──────────────────────────────────────────────────────────────────────────────
 import logging
-from datetime import datetime, timedelta
 import pytz
 import requests
+from datetime import datetime, timedelta
+
 import discord
 from discord.ext import commands
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
 from dotenv import load_dotenv
 
+# env 읽기
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", "0"))
 LOSTARK_JWT = os.getenv("LOSTARK_JWT")
 
+# 타임존
 KST = pytz.timezone("Asia/Seoul")
 API_URL = "https://developer-lostark.game.onstove.com/gamecontents/calendar"
 
-intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
 logging.basicConfig(level=logging.INFO)
 
-scheduler = AsyncIOScheduler(timezone=KST)
+# Discord 설정
+intents = discord.Intents.default()
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ─────────────────────────────────────────────
-# Lost Ark API 처리
-# ─────────────────────────────────────────────
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Lost Ark API 함수들
+# ──────────────────────────────────────────────────────────────────────────────
 _calendar_cache_date = None
 _calendar_cache_data = None
 
 def get_calendar():
-    global _calendar_cache_data, _calendar_cache_date
+    """API + 캐시"""
+    global _calendar_cache_date, _calendar_cache_data
+
     today = datetime.now(KST).date()
 
     if _calendar_cache_date == today and _calendar_cache_data:
         return _calendar_cache_data
 
-    r = requests.get(API_URL, headers={
+    headers = {
         "accept": "application/json",
-        "authorization": f"bearer {LOSTARK_JWT}"
-    }, timeout=15)
-
+        "authorization": f"bearer {LOSTARK_JWT}",
+    }
+    r = requests.get(API_URL, headers=headers, timeout=15)
     r.raise_for_status()
     data = r.json()
-    _calendar_cache_data, _calendar_cache_date = data, today
+
+    _calendar_cache_date = today
+    _calendar_cache_data = data
     return data
 
 
@@ -87,26 +81,31 @@ def rewards_to_text(rewards):
 
     names = []
 
+    # 중첩된 RewardItems 다 찾아서 이름만 빼기
     def extract(o):
         if isinstance(o, dict):
-            if o.get("Name"): names.append(str(o["Name"]))
-            if o.get("RewardName"): names.append(str(o["RewardName"]))
-            for v in o.values(): extract(v)
+            if o.get("Name"):
+                names.append(str(o["Name"]))
+            if o.get("RewardName"):
+                names.append(str(o["RewardName"]))
+            for v in o.values():
+                extract(v)
         elif isinstance(o, list):
-            for x in o: extract(x)
+            for x in o:
+                extract(x)
 
     extract(rewards)
-    names = [n for n in names if n.strip()]
+    names = [n.strip() for n in names if n.strip()]
 
-    def is_gold(s):
-        s2 = s.lower()
-        return ("골드" in s) or ("gold" in s2)
+    if not names:
+        return "보상: (이벤트 데이터 없음)"
 
-    gold = [n for n in names if is_gold(n)]
-    others = [n for n in names if not is_gold(n)]
+    # 금 보상 구분
+    gold = [n for n in names if ("골드" in n or "gold" in n.lower())]
+    other = [n for n in names if n not in gold]
 
-    lines = [f"- {n}" for n in gold]
-    lines += [f"  {n}" for n in others]
+    lines = [f"- {n}" for n in sorted(set(gold))]
+    lines += [f"  {n}" for n in sorted(set(other))]
 
     return "보상:\n```diff\n" + "\n".join(lines) + "\n```"
 
@@ -117,136 +116,131 @@ def parse_adventure_islands(data, date=None):
 
     out = []
 
-    if not isinstance(data, list):
-        return out
-
     for e in data:
-        # Category / CategoryName 둘 다 확인
-        cat = (
-            e.get("Category")
-            or e.get("CategoryName")
-            or ""
-        )
-        cat_low = str(cat).lower()
+        cat = (e.get("Category") or "").lower()
 
-        # 모험섬 카테고리 판별
-        if ("모험" in cat_low and "섬" in cat_low) or ("adventure" in cat_low and "island" in cat_low):
-            name = e.get("ContentsName") or e.get("Title") or "모험섬"
-            desc = e.get("ContentsNote") or e.get("Description") or ""
+        if ("모험" in cat and "섬" in cat) or ("adventure" in cat and "island" in cat):
+            name = e.get("ContentsName") or "모험섬"
+            desc = e.get("ContentsNote") or ""
             rewards = e.get("RewardItems") or e.get("Rewards")
 
             times = e.get("StartTimes") or e.get("StartTime") or []
             if not isinstance(times, list):
                 times = [times]
 
-            valid = []
-            raw_times = []
-
+            valid_times = []
             for t in times:
-                raw_times.append(str(t))
                 try:
                     dt = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
-                    # 타임존 정리
-                    if dt.tzinfo is None:
-                        dt = KST.localize(dt)
-                    else:
-                        dt = dt.astimezone(KST)
-
+                    dt = dt.astimezone(KST)
                     if dt.date() == date:
-                        valid.append(dt)
-                except Exception as ex:
-                    logging.warning(f"[parse_adventure_islands] 시간 파싱 실패: {t} / {ex}")
+                        valid_times.append(dt)
+                except:
+                    pass
 
-            # 디버그 로그: 이 이벤트가 오늘자로 어떻게 인식됐는지
-            logging.info(
-                f"[캘린더] {name} cat={cat} raw_times={raw_times} "
-                f"오늘 날짜 매칭 개수={len(valid)}"
-            )
-
-            if valid:
+            if valid_times:
                 out.append({
                     "name": name,
                     "desc": desc,
-                    "times": sorted(valid),
-                    "rewards": rewards,
+                    "times": sorted(valid_times),
+                    "rewards": rewards
                 })
 
     out.sort(key=lambda x: x["times"][0])
     return out
 
 
-
 def build_adventure_embed(for_date=None, prefix="오늘의 모험섬"):
     data = get_calendar()
     arr = parse_adventure_islands(data, for_date)
+
     ds = (for_date or datetime.now(KST).date()).strftime("%m/%d (%a)")
 
-    embed = discord.Embed(title=f"{prefix} {ds}", color=0xA3BFFA)
+    embed = discord.Embed(title=f"{prefix} {ds}", color=0x2ecc71)
     embed.set_footer(text="데이터 출처: Lost Ark OpenAPI")
 
     if not arr:
-        embed.description = "해당 날짜의 모험섬 정보가 없습니다."
+        embed.description = "해당 날짜 모험섬 없음"
         return embed
 
     for it in arr:
-        times = " / ".join(dt.strftime("%H:%M") for dt in it["times"])
-        body = [
-            f"시간: {times}",
-            f"메모: {it['desc']}" if it["desc"] else "",
-            rewards_to_text(it["rewards"])
-        ]
-
-        embed.add_field(name=it["name"], value="\n".join(body), inline=False)
+        t_str = " / ".join(d.strftime("%H:%M") for d in it["times"])
+        msg = [f"시간: {t_str}"]
+        if it["desc"]:
+            msg.append(f"메모: {it['desc']}")
+        msg.append(rewards_to_text(it["rewards"]))
+        embed.add_field(name=it["name"], value="\n".join(msg), inline=False)
 
     return embed
 
 
-async def send_island_info():
-    logging.info(f"[send_island_info] 시작, CHANNEL_ID={CHANNEL_ID}")
+# ──────────────────────────────────────────────────────────────────────────────
+# 자동 발송 (06:01 체크 방식)
+# ──────────────────────────────────────────────────────────────────────────────
+last_send_date = None   # 하루 1회 제한용
 
-    ch = bot.get_channel(CHANNEL_ID)
-    logging.info(f"[send_island_info] 채널 객체={ch} (type={type(ch)})")
+async def daily_check():
+    """매 1분마다 실행 → 06:01 되면 발송"""
+    global last_send_date
 
-    if not ch:
-        logging.error("[send_island_info] 채널을 찾지 못했습니다. DISCORD_CHANNEL_ID를 확인하세요.")
+    now = datetime.now(KST)
+    today = now.date()
+
+    # 이미 보냈으면 패스
+    if last_send_date == today:
         return
 
-    try:
-        embed = build_adventure_embed()
-        logging.info(f"[send_island_info] embed 생성 완료: title={embed.title}")
-        await ch.send(embed=embed)
-        logging.info("[send_island_info] 메시지 전송 완료")
-    except Exception as e:
-        logging.exception(f"[send_island_info] 메시지 전송 중 예외 발생: {e}")
+    if now.hour == 6 and now.minute == 1:
+        ch = bot.get_channel(CHANNEL_ID)
+        if ch:
+            embed = build_adventure_embed()
+            await ch.send(embed=embed)
+            logging.info("[자동 발송] 06:01 모험섬 전송 완료")
+        else:
+            logging.error("채널을 찾지 못했습니다.")
+
+        last_send_date = today
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Discord 이벤트
+# ──────────────────────────────────────────────────────────────────────────────
 @bot.event
 async def on_ready():
     logging.info(f"로그인 성공: {bot.user}")
 
-    if not scheduler.get_jobs():
-        scheduler.add_job(send_island_info, CronTrigger(hour=6, minute=1))
-        scheduler.add_job(
-            send_island_info,
-            DateTrigger(run_date=datetime.now(KST) + timedelta(seconds=5)),
-        )
-        scheduler.start()
+    # 스케줄러 시작
+    scheduler = AsyncIOScheduler(timezone=KST)
+    scheduler.add_job(daily_check, "interval", minutes=1)
+    scheduler.start()
 
-    await bot.tree.sync()
+    # Slash 등록
+    try:
+        await bot.tree.sync()
+    except:
+        pass
 
 
-@bot.tree.command(name="island")
+# ──────────────────────────────────────────────────────────────────────────────
+# Slash Command
+# ──────────────────────────────────────────────────────────────────────────────
+@bot.tree.command(name="island", description="오늘 모험섬 출력")
 async def island_today(interaction: discord.Interaction):
     await interaction.response.defer()
-    await interaction.followup.send(embed=build_adventure_embed())
+    embed = build_adventure_embed()
+    await interaction.followup.send(embed=embed)
 
 
-@bot.tree.command(name="island_tomorrow")
+@bot.tree.command(name="island_tomorrow", description="내일 모험섬 미리보기")
 async def island_tomorrow(interaction: discord.Interaction):
     await interaction.response.defer()
     tomorrow = (datetime.now(KST) + timedelta(days=1)).date()
-    await interaction.followup.send(embed=build_adventure_embed(for_date=tomorrow, prefix="내일의 모험섬"))
+    embed = build_adventure_embed(for_date=tomorrow, prefix="내일의 모험섬")
+    await interaction.followup.send(embed=embed)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 실행
+# ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
