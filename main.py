@@ -81,13 +81,15 @@ def rewards_to_text(rewards):
 
     names = []
 
-    # 중첩된 RewardItems 다 찾아서 이름만 빼기
+    # 중첩 구조에서 보상명 추출
     def extract(o):
         if isinstance(o, dict):
             if o.get("Name"):
                 names.append(str(o["Name"]))
             if o.get("RewardName"):
                 names.append(str(o["RewardName"]))
+            if o.get("Item") and isinstance(o["Item"], dict) and o["Item"].get("Name"):
+                names.append(str(o["Item"]["Name"]))
             for v in o.values():
                 extract(v)
         elif isinstance(o, list):
@@ -100,7 +102,7 @@ def rewards_to_text(rewards):
     if not names:
         return "보상: (이벤트 데이터 없음)"
 
-    # 금 보상 구분
+    # 금 보상 우선
     gold = [n for n in names if ("골드" in n or "gold" in n.lower())]
     other = [n for n in names if n not in gold]
 
@@ -117,9 +119,16 @@ def parse_adventure_islands(data, date=None):
     out = []
 
     for e in data:
-        cat = (e.get("Category") or "").lower()
+        # 최신 Lost Ark 구조 대응: Category + CategoryName + Type + ContentsName 전부 합침
+        cat = (
+            (e.get("Category") or "") +
+            (e.get("CategoryName") or "") +
+            (e.get("Type") or "") +
+            (e.get("ContentsName") or "")
+        ).lower()
 
-        if ("모험" in cat and "섬" in cat) or ("adventure" in cat and "island" in cat):
+        # Adventure Island 조건
+        if "모험" in cat and "섬" in cat:
             name = e.get("ContentsName") or "모험섬"
             desc = e.get("ContentsNote") or ""
             rewards = e.get("RewardItems") or e.get("Rewards")
@@ -186,7 +195,6 @@ async def daily_check():
     now = datetime.now(KST)
     today = now.date()
 
-    # 이미 보냈으면 패스
     if last_send_date == today:
         return
 
@@ -209,12 +217,10 @@ async def daily_check():
 async def on_ready():
     logging.info(f"로그인 성공: {bot.user}")
 
-    # 스케줄러 시작
     scheduler = AsyncIOScheduler(timezone=KST)
     scheduler.add_job(daily_check, "interval", minutes=1)
     scheduler.start()
 
-    # Slash 등록
     try:
         await bot.tree.sync()
     except:
@@ -244,5 +250,7 @@ async def island_tomorrow(interaction: discord.Interaction):
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
+
 
 
