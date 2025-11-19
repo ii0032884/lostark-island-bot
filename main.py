@@ -48,13 +48,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Lost Ark API 함수들
+# Lost Ark API 함수들 (파싱 개선 적용)
 # ──────────────────────────────────────────────────────────────────────────────
 _calendar_cache_date = None
 _calendar_cache_data = None
 
 def get_calendar():
-    """API + 캐시"""
+    """API 요청 + 캐싱"""
     global _calendar_cache_date, _calendar_cache_data
 
     today = datetime.now(KST).date()
@@ -81,7 +81,7 @@ def rewards_to_text(rewards):
 
     names = []
 
-    # 중첩 구조에서 보상명 추출
+    # 중첩 구조 파싱
     def extract(o):
         if isinstance(o, dict):
             if o.get("Name"):
@@ -102,7 +102,6 @@ def rewards_to_text(rewards):
     if not names:
         return "보상: (이벤트 데이터 없음)"
 
-    # 금 보상 우선
     gold = [n for n in names if ("골드" in n or "gold" in n.lower())]
     other = [n for n in names if n not in gold]
 
@@ -113,13 +112,14 @@ def rewards_to_text(rewards):
 
 
 def parse_adventure_islands(data, date=None):
+    """Lost Ark 최신 Calendar JSON 구조 대응"""
     if date is None:
         date = datetime.now(KST).date()
 
     out = []
 
     for e in data:
-        # 최신 Lost Ark 구조 대응: Category + CategoryName + Type + ContentsName 전부 합침
+        # 최신 구조: Category + CategoryName + Type + ContentsName 모두 병합
         cat = (
             (e.get("Category") or "") +
             (e.get("CategoryName") or "") +
@@ -127,7 +127,7 @@ def parse_adventure_islands(data, date=None):
             (e.get("ContentsName") or "")
         ).lower()
 
-        # Adventure Island 조건
+        # 모험섬 조건
         if "모험" in cat and "섬" in cat:
             name = e.get("ContentsName") or "모험섬"
             desc = e.get("ContentsNote") or ""
@@ -184,34 +184,42 @@ def build_adventure_embed(for_date=None, prefix="오늘의 모험섬"):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 자동 발송 (06:01 체크 방식)
+# 자동 발송 (7개 시간 한 번씩)
 # ──────────────────────────────────────────────────────────────────────────────
-last_send_date = None   # 하루 1회 제한용
+send_history = {}  # { "HH:MM" : date }
+
+TARGET_TIMES = [
+    "06:01",
+    "08:50",
+    "10:50",
+    "12:50",
+    "18:50",
+    "20:50",
+    "22:50",
+]
 
 async def daily_check():
-    """매 1분마다 실행 → 06:01 되면 발송"""
-    global last_send_date
-
     now = datetime.now(KST)
     today = now.date()
+    current_time = now.strftime("%H:%M")
 
-    if last_send_date == today:
-        return
+    if current_time in TARGET_TIMES:
+        if send_history.get(current_time) == today:
+            return
 
-    if now.hour == 6 and now.minute == 1:
         ch = bot.get_channel(CHANNEL_ID)
         if ch:
             embed = build_adventure_embed()
             await ch.send(embed=embed)
-            logging.info("[자동 발송] 06:01 모험섬 전송 완료")
+            logging.info(f"[자동 발송] {current_time} 모험섬 전송 완료")
         else:
-            logging.error("채널을 찾지 못했습니다.")
+            logging.error("채널 찾기 실패")
 
-        last_send_date = today
+        send_history[current_time] = today
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Discord 이벤트
+# Discord Ready 이벤트
 # ──────────────────────────────────────────────────────────────────────────────
 @bot.event
 async def on_ready():
@@ -228,7 +236,7 @@ async def on_ready():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Slash Command
+# Slash Commands
 # ──────────────────────────────────────────────────────────────────────────────
 @bot.tree.command(name="island", description="오늘 모험섬 출력")
 async def island_today(interaction: discord.Interaction):
@@ -250,6 +258,8 @@ async def island_tomorrow(interaction: discord.Interaction):
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
+
 
 
 
