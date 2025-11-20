@@ -141,7 +141,7 @@ def parse_adventure_islands(data, date=None):
             for t in times:
                 try:
                     dt = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
-                    dt = dt.astimezone(KST)
+                    #dt = dt.astimezone(KST)
                     logging.info(dt)
                     if dt.date() == date:
                         valid_times.append(dt)
@@ -260,6 +260,7 @@ async def island_tomorrow(interaction: discord.Interaction):
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
 
 
