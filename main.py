@@ -119,7 +119,6 @@ def parse_adventure_islands(data, date=None):
     out = []
 
     for e in data:
-        logging.info(e)
         # 최신 구조: Category + CategoryName + Type + ContentsName 모두 병합
         cat = (
             (e.get("Category") or "") +
@@ -135,6 +134,7 @@ def parse_adventure_islands(data, date=None):
             rewards = e.get("RewardItems") or e.get("Rewards")
 
             times = e.get("StartTimes") or e.get("StartTime") or []
+            logging.info(times)
             if not isinstance(times, list):
                 times = [times]
 
@@ -259,6 +259,7 @@ async def island_tomorrow(interaction: discord.Interaction):
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
 
 
