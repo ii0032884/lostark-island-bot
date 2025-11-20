@@ -134,7 +134,6 @@ def parse_adventure_islands(data, date=None):
             rewards = e.get("RewardItems") or e.get("Rewards")
 
             times = e.get("StartTimes") or e.get("StartTime") or []
-            logging.info(times)
             if not isinstance(times, list):
                 times = [times]
 
@@ -143,6 +142,7 @@ def parse_adventure_islands(data, date=None):
                 try:
                     dt = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
                     dt = dt.astimezone(KST)
+                    logging.info(dt)
                     if dt.date() == date:
                         valid_times.append(dt)
                 except:
@@ -155,6 +155,7 @@ def parse_adventure_islands(data, date=None):
                     "times": sorted(valid_times),
                     "rewards": rewards
                 })
+            logging.info(valid_times)
 
     out.sort(key=lambda x: x["times"][0])
     return out
@@ -259,6 +260,7 @@ async def island_tomorrow(interaction: discord.Interaction):
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
 
 
