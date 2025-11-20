@@ -72,7 +72,6 @@ def get_calendar():
 
     _calendar_cache_date = today
     _calendar_cache_data = data
-    logging.info(data)
     return data
 
 
@@ -120,6 +119,7 @@ def parse_adventure_islands(data, date=None):
     out = []
 
     for e in data:
+        logging.info(e)
         # 최신 구조: Category + CategoryName + Type + ContentsName 모두 병합
         cat = (
             (e.get("Category") or "") +
@@ -259,6 +259,7 @@ async def island_tomorrow(interaction: discord.Interaction):
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
 
 
