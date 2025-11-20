@@ -72,6 +72,7 @@ def get_calendar():
 
     _calendar_cache_date = today
     _calendar_cache_data = data
+    logging.info(data)
     return data
 
 
@@ -156,7 +157,6 @@ def parse_adventure_islands(data, date=None):
                 })
 
     out.sort(key=lambda x: x["times"][0])
-    logging.info(out)
     return out
 
 
@@ -259,6 +259,7 @@ async def island_tomorrow(interaction: discord.Interaction):
 # ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
 
 
