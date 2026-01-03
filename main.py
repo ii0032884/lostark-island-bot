@@ -36,7 +36,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("DISCORD_CHANNEL_ID", "0"))
 LOSTARK_JWT = os.getenv("LOSTARK_JWT")
 
-# 타임존
+# 타임존 설정
 KST = pytz.timezone("Asia/Seoul")
 API_URL = "https://developer-lostark.game.onstove.com/gamecontents/calendar"
 
@@ -48,7 +48,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Lost Ark API 함수들 (파싱 개선 적용)
+# Lost Ark API 함수들 (파싱 개선 및 2026년 날짜 보정)
 # ──────────────────────────────────────────────────────────────────────────────
 _calendar_cache_date = None
 _calendar_cache_data = None
@@ -56,7 +56,6 @@ _calendar_cache_data = None
 def get_calendar():
     """API 요청 + 캐싱"""
     global _calendar_cache_date, _calendar_cache_data
-
     today = datetime.now(KST).date()
 
     if _calendar_cache_date == today and _calendar_cache_data:
@@ -80,21 +79,15 @@ def rewards_to_text(rewards):
         return "보상: (정보 없음)"
 
     names = []
-
-    # 중첩 구조 파싱
     def extract(o):
         if isinstance(o, dict):
-            if o.get("Name"):
-                names.append(str(o["Name"]))
-            if o.get("RewardName"):
-                names.append(str(o["RewardName"]))
+            if o.get("Name"): names.append(str(o["Name"]))
+            if o.get("RewardName"): names.append(str(o["RewardName"]))
             if o.get("Item") and isinstance(o["Item"], dict) and o["Item"].get("Name"):
                 names.append(str(o["Item"]["Name"]))
-            for v in o.values():
-                extract(v)
+            for v in o.values(): extract(v)
         elif isinstance(o, list):
-            for x in o:
-                extract(x)
+            for x in o: extract(x)
 
     extract(rewards)
     names = [n.strip() for n in names if n.strip()]
@@ -112,27 +105,18 @@ def rewards_to_text(rewards):
 
 
 def parse_adventure_islands(data, date=None):
-    """Lost Ark 최신 Calendar JSON 구조 대응"""
+    """타임존 보정 및 날짜 비교 로직 강화"""
     if date is None:
         date = datetime.now(KST).date()
 
     out = []
 
     for e in data:
-        # 최신 구조: Category + CategoryName + Type + ContentsName 모두 병합
-        cat = (
-            (e.get("Category") or "") +
-            (e.get("CategoryName") or "") +
-            (e.get("Type") or "") +
-            (e.get("ContentsName") or "")
-        ).lower()
-
-        # 모험섬 조건
-        if "모험" in cat and "섬" in cat:
-            name = e.get("ContentsName") or "모험섬"
-            desc = e.get("ContentsNote") or ""
-            rewards = e.get("RewardItems") or e.get("Rewards")
-
+        # 카테고리 또는 이름에서 '모험섬' 추출
+        cat_name = e.get("CategoryName") or ""
+        cont_name = e.get("ContentsName") or ""
+        
+        if "모험" in cat_name and "섬" in cat_name:
             times = e.get("StartTimes") or e.get("StartTime") or []
             if not isinstance(times, list):
                 times = [times]
@@ -140,38 +124,46 @@ def parse_adventure_islands(data, date=None):
             valid_times = []
             for t in times:
                 try:
-                    dt = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
-                    #dt = dt.astimezone(KST)
-                    logging.info(dt)
-                    if dt.date() == date:
-                        valid_times.append(dt)
-                except:
-                    pass
+                    # ISO 문자열 파싱 (Z를 +00:00으로 치환하여 표준화)
+                    dt_raw = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
+                    
+                    # [핵심] API 응답이 UTC 기반일 경우 KST로 변환하여 날짜 계산
+                    # 만약 KST 기반인데 Z만 붙어있는 경우라면, 이 과정을 거쳐야 정확한 KST 날짜가 나옵니다.
+                    dt_kst = dt_raw.astimezone(KST)
+
+                    if dt_kst.date() == date:
+                        valid_times.append(dt_kst)
+                except Exception as ex:
+                    logging.error(f"Time parsing error: {ex}")
+                    continue
 
             if valid_times:
                 out.append({
-                    "name": name,
-                    "desc": desc,
+                    "name": cont_name,
+                    "desc": e.get("ContentsNote") or "",
                     "times": sorted(valid_times),
-                    "rewards": rewards
+                    "rewards": e.get("RewardItems") or e.get("Rewards")
                 })
-            logging.info(valid_times)
 
-    out.sort(key=lambda x: x["times"][0])
+    out.sort(key=lambda x: x["times"][0] if x["times"] else datetime.min.replace(tzinfo=KST))
     return out
 
 
 def build_adventure_embed(for_date=None, prefix="오늘의 모험섬"):
-    data = get_calendar()
-    arr = parse_adventure_islands(data, for_date)
+    try:
+        data = get_calendar()
+        arr = parse_adventure_islands(data, for_date)
+    except Exception as e:
+        logging.error(f"Build embed error: {e}")
+        embed = discord.Embed(title="오류 발생", description="API 데이터를 가져올 수 없습니다.", color=0xff0000)
+        return embed
 
     ds = (for_date or datetime.now(KST).date()).strftime("%m/%d (%a)")
-
     embed = discord.Embed(title=f"{prefix} {ds}", color=0x2ecc71)
     embed.set_footer(text="데이터 출처: Lost Ark OpenAPI")
 
     if not arr:
-        embed.description = "해당 날짜 모험섬 없음"
+        embed.description = "해당 날짜 모험섬 정보가 없습니다."
         return embed
 
     for it in arr:
@@ -186,19 +178,11 @@ def build_adventure_embed(for_date=None, prefix="오늘의 모험섬"):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 자동 발송 (7개 시간 한 번씩)
+# 자동 발송 설정
 # ──────────────────────────────────────────────────────────────────────────────
-send_history = {}  # { "HH:MM" : date }
+send_history = {}
 
-TARGET_TIMES = [
-    "06:01",
-    "08:50",
-    "10:50",
-    "12:50",
-    "18:50",
-    "20:50",
-    "22:50",
-]
+TARGET_TIMES = ["06:01", "08:50", "10:50", "12:50", "18:50", "20:50", "22:50"]
 
 async def daily_check():
     now = datetime.now(KST)
@@ -213,33 +197,31 @@ async def daily_check():
         if ch:
             embed = build_adventure_embed()
             await ch.send(embed=embed)
-            logging.info(f"[자동 발송] {current_time} 모험섬 전송 완료")
+            logging.info(f"[자동 발송] {current_time} 전송 완료")
+            send_history[current_time] = today
         else:
-            logging.error("채널 찾기 실패")
-
-        send_history[current_time] = today
+            logging.error(f"채널 ID {CHANNEL_ID}를 찾을 수 없습니다.")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Discord Ready 이벤트
+# Discord Event & Commands
 # ──────────────────────────────────────────────────────────────────────────────
 @bot.event
 async def on_ready():
     logging.info(f"로그인 성공: {bot.user}")
-
+    
+    # 스케줄러 시작
     scheduler = AsyncIOScheduler(timezone=KST)
     scheduler.add_job(daily_check, "interval", minutes=1)
     scheduler.start()
 
     try:
         await bot.tree.sync()
-    except:
-        pass
+        logging.info("슬래시 커맨드 동기화 완료")
+    except Exception as e:
+        logging.error(f"커맨드 동기화 에러: {e}")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Slash Commands
-# ──────────────────────────────────────────────────────────────────────────────
 @bot.tree.command(name="island", description="오늘 모험섬 출력")
 async def island_today(interaction: discord.Interaction):
     await interaction.response.defer()
@@ -255,15 +237,8 @@ async def island_tomorrow(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 실행
-# ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
-
-
-
-
 
 
 
